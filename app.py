@@ -46,7 +46,7 @@ class ChatMessage(db.Model):
     content = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-# API route to handle chat
+# Chat route
 @app.route("/api/query", methods=["POST"])
 def query_openai():
     try:
@@ -80,10 +80,11 @@ def query_openai():
         return jsonify({"response": bot_message})
 
     except Exception as e:
-        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": "Failed to process the request"}), 500
 
-# Route to reset a session (optional)
+# Optional reset route
 @app.route("/api/reset", methods=["POST"])
 def reset_session():
     try:
@@ -97,11 +98,53 @@ def reset_session():
         return jsonify({"message": "Session reset successfully."})
 
     except Exception as e:
-        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": "Failed to reset session"}), 500
+# Get session history (JSON)
+@app.route("/api/history", methods=["GET"])
+def get_history():
+    session_id = request.args.get("session_id")
+    if not session_id:
+        return jsonify({"error": "Missing session_id"}), 400
 
-# Main
+    history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.timestamp).all()
+    formatted = [{
+        "timestamp": msg.timestamp.isoformat(),
+        "role": msg.role,
+        "content": msg.content
+    } for msg in history]
+
+    return jsonify({"messages": formatted})
+
+
+# Export session as plain text
+@app.route("/api/export", methods=["POST"])
+def export_session():
+    data = request.json
+    session_id = data.get("session_id")
+
+    if not session_id:
+        return jsonify({"error": "Missing session_id"}), 400
+
+    history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.timestamp).all()
+
+    if not history:
+        return jsonify({"error": "No messages found for session"}), 404
+
+    export_lines = []
+    for msg in history:
+        prefix = "🧑 You" if msg.role == "user" else "🤖 Assistant"
+        export_lines.append(f"{prefix} ({msg.timestamp.strftime('%Y-%m-%d %H:%M')}):\n{msg.content}\n")
+
+    export_text = "\n".join(export_lines)
+
+    return jsonify({"text": export_text})
+
+
+# Automatically create DB tables at boot
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
+        print("✅ Database table 'chat_message' ensured.")
     app.run(debug=True)
