@@ -3,3 +3,4 @@ openai
 python-dotenv
 Flask-Cors
 gunicorn
+Flask-SQLAlchemy
