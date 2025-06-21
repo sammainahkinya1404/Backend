@@ -19,33 +19,39 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///chat_memory.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
+# Ensure table creation even on Render/Gunicorn
+with app.app_context():
+    db.create_all()
+    print("✅ chat_message table ensured.")
+
 # Initialize OpenAI client
 client = OpenAI(api_key=api_key)
 
-# System message to guide GPT-4 behavior
+# System prompt
 SYSTEM_MESSAGE = {
     "role": "system",
     "content": (
         "You are a smart and realistic business assistant focused on Kenya. Your role is to:\n"
-        "1. Suggest viable business and investment opportunities in Kenya.\n"
-        "2. Generate startup budgets with details like rent, licenses, staff, and marketing.\n"
-        "3. Estimate profits/losses with local pricing assumptions.\n"
-        "4. Recommend ideas based on user's capital, location, and interests.\n"
-        "5. Optionally offer timelines, digital tools, and registration steps in Kenya.\n"
-        "6. Redirect any international queries back to local context.\n"
-        "Be clear, practical, and user-focused."
+        "1. Suggest viable business and investment opportunities in Kenya, tailored to local demand.\n"
+        "2. Generate practical startup budgets for business ideas — breaking down costs like licenses, rent, inventory, salaries, marketing, and contingencies.\n"
+        "3. Estimate realistic profit and loss projections for businesses over 6 to 12 months, showing assumptions (e.g., daily revenue, margins, seasonal trends).\n"
+        "4. Recommend the most suitable business based on user inputs like available capital, location (urban/rural), interests, and risk appetite.\n"
+        "5. Provide optional extras: startup timelines, legal steps (e.g., licensing in Kenya), digital tools (e.g., POS, inventory software), and links to government or support resources.\n"
+        "6. If the user input is too vague, politely ask for more information (like capital or location) to give better guidance.\n\n"
+        "⚠️ Only give advice grounded in the Kenyan market. If the user asks about international business, gently redirect back to local relevance.\n"
+        "Be polite, realistic, and helpful. Think like a business consultant who understands everyday challenges."
     )
 }
 
-# Database model
+# Model
 class ChatMessage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.String(64), nullable=False)
-    role = db.Column(db.String(10), nullable=False)  # 'user' or 'assistant'
+    role = db.Column(db.String(10), nullable=False)
     content = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
-# Handle GPT-4 chat query
+# Query route
 @app.route("/api/query", methods=["POST"])
 def query_openai():
     try:
@@ -56,15 +62,15 @@ def query_openai():
         if not user_message or not session_id:
             return jsonify({"error": "Missing message or session_id"}), 400
 
-        # Store user message
+        # Save user input
         db.session.add(ChatMessage(session_id=session_id, role="user", content=user_message))
         db.session.commit()
 
-        # Retrieve full session history
+        # Get session history
         history = ChatMessage.query.filter_by(session_id=session_id).order_by(ChatMessage.timestamp).all()
         messages = [SYSTEM_MESSAGE] + [{"role": msg.role, "content": msg.content} for msg in history]
 
-        # Send to OpenAI
+        # Ask OpenAI
         response = client.chat.completions.create(
             model="gpt-4",
             messages=messages
@@ -72,7 +78,7 @@ def query_openai():
 
         bot_message = response.choices[0].message.content
 
-        # Store assistant message
+        # Save assistant message
         db.session.add(ChatMessage(session_id=session_id, role="assistant", content=bot_message))
         db.session.commit()
 
@@ -83,12 +89,11 @@ def query_openai():
         traceback.print_exc()
         return jsonify({"error": "Failed to process the request"}), 500
 
-# Reset session memory
+# Reset session
 @app.route("/api/reset", methods=["POST"])
 def reset_session():
     try:
-        data = request.json
-        session_id = data.get("session_id")
+        session_id = request.json.get("session_id")
         if not session_id:
             return jsonify({"error": "Missing session_id"}), 400
 
@@ -101,7 +106,7 @@ def reset_session():
         traceback.print_exc()
         return jsonify({"error": "Failed to reset session"}), 500
 
-# Return message history
+# History endpoint
 @app.route("/api/history", methods=["GET"])
 def get_history():
     session_id = request.args.get("session_id")
@@ -117,12 +122,10 @@ def get_history():
 
     return jsonify({"messages": formatted})
 
-# Export history as plain text
+# Export text transcript
 @app.route("/api/export", methods=["POST"])
 def export_session():
-    data = request.json
-    session_id = data.get("session_id")
-
+    session_id = request.json.get("session_id")
     if not session_id:
         return jsonify({"error": "Missing session_id"}), 400
 
@@ -137,16 +140,6 @@ def export_session():
 
     return jsonify({"text": "\n".join(export_lines)})
 
-# Optional: manual DB init (Render debug)
-@app.route("/init-db")
-def init_db():
-    with app.app_context():
-        db.create_all()
-    return "✅ Tables created."
-
-# Auto-create tables on boot
+# Run (optional for local testing)
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-        print("✅ Database table 'chat_message' ensured.")
     app.run(debug=True)
